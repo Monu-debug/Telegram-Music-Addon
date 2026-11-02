@@ -1,0 +1,32 @@
+services:
+  - type: web
+    name: telegram-music-addon
+    runtime: node
+    plan: free
+    buildCommand: npm install --omit=dev
+    startCommand: node index.js
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 3000
+      - key: ENABLE_CLOUDFLARE_TUNNEL
+        value: false
+      - key: TELEGRAM_API_ID
+        sync: false
+      - key: TELEGRAM_API_HASH
+        sync: false
+      - key: TELEGRAM_SESSION_STRING
+        sync: false
+      - key: TELEGRAM_CHANNEL
+        sync: false
+      - key: URL_SECRET
+        sync: false
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: ENABLE_BOT_SYNC
+        value: false
+      - key: PUBLIC_URL
+        sync: false
+      - key: ENABLE_CHANNEL_NOTIFICATIONS
+        value: false

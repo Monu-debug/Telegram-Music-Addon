@@ -160,7 +160,12 @@ function writeEnvKeys(updates) {
 
 function isConfigured() {
   const env = readEnvMap();
-  return Boolean(env.TELEGRAM_API_ID && env.TELEGRAM_API_HASH && env.TELEGRAM_SESSION_STRING && env.TELEGRAM_CHANNEL);
+  // Check .env file first, then fall back to process.env (for cloud platforms like Render)
+  const apiId = env.TELEGRAM_API_ID || process.env.TELEGRAM_API_ID;
+  const apiHash = env.TELEGRAM_API_HASH || process.env.TELEGRAM_API_HASH;
+  const session = env.TELEGRAM_SESSION_STRING || process.env.TELEGRAM_SESSION_STRING;
+  const channel = env.TELEGRAM_CHANNEL || process.env.TELEGRAM_CHANNEL;
+  return Boolean(apiId && apiHash && session && channel);
 }
 
 function clearActiveSetup() {
@@ -174,23 +179,25 @@ function clearActiveSetup() {
 
 router.get('/status', (req, res) => {
   const env = readEnvMap();
-  const configured = Boolean(env.TELEGRAM_API_ID && env.TELEGRAM_API_HASH && env.TELEGRAM_SESSION_STRING && env.TELEGRAM_CHANNEL);
-  const activeSecret = env.URL_SECRET || env.ACCESS_TOKEN;
+  // Fall back to process.env for cloud platforms (Render, Railway, etc.)
+  const get = (key) => env[key] || process.env[key] || '';
+  const configured = Boolean(get('TELEGRAM_API_ID') && get('TELEGRAM_API_HASH') && get('TELEGRAM_SESSION_STRING') && get('TELEGRAM_CHANNEL'));
+  const activeSecret = get('URL_SECRET') || get('ACCESS_TOKEN');
   res.json({
     configured,
     tracksCount: getLibraryTracksCount(),
-    apiId: env.TELEGRAM_API_ID || (activeSetup?.apiId ? activeSetup.apiId.toString() : null),
-    apiHash: env.TELEGRAM_API_HASH || activeSetup?.apiHash || null,
-    phoneNumber: env.TELEGRAM_PHONE || activeSetup?.phoneNumber || null,
-    channel: env.TELEGRAM_CHANNEL || null,
-    teledriveChannel: env.TELEDRIVE_CHANNEL || null,
-    port: parseInt(env.PORT || '3000', 10),
-    enableBotSync: env.ENABLE_BOT_SYNC === 'true',
-    botToken: env.TELEGRAM_BOT_TOKEN || null,
+    apiId: get('TELEGRAM_API_ID') || (activeSetup?.apiId ? activeSetup.apiId.toString() : null),
+    apiHash: get('TELEGRAM_API_HASH') || activeSetup?.apiHash || null,
+    phoneNumber: get('TELEGRAM_PHONE') || activeSetup?.phoneNumber || null,
+    channel: get('TELEGRAM_CHANNEL') || null,
+    teledriveChannel: get('TELEDRIVE_CHANNEL') || null,
+    port: parseInt(get('PORT') || '3000', 10),
+    enableBotSync: get('ENABLE_BOT_SYNC') === 'true',
+    botToken: get('TELEGRAM_BOT_TOKEN') || null,
     hasSecret: Boolean(activeSecret),
     urlSecret: activeSecret || getSuggestedSecret(),
-    customPublicUrl: env.PUBLIC_URL || null,
-    enableTunnel: env.ENABLE_CLOUDFLARE_TUNNEL !== 'false',
+    customPublicUrl: get('PUBLIC_URL') || null,
+    enableTunnel: get('ENABLE_CLOUDFLARE_TUNNEL') !== 'false',
     tunnelActive: Boolean(tunnel.getTunnelUrl()),
     tunnelUrl: tunnel.getTunnelUrl(),
     tunnelInstalled: tunnel.isInstalled(),
