@@ -205,11 +205,21 @@ function findAudioFiles(dir, fileList = []) {
       processedCount++;
       console.log(`Completed processing: ${fileName}`);
 
-      // Send log notification to source channel
+      // Send log notification (Source Channel + Target Vault Channel)
+      const logText = uploadedTracks > 0
+        ? `✅ **Archive Processed:** \`${fileName}\`\n🎵 **Tracks Uploaded:** ${uploadedTracks} file(s)\n📦 **Status:** Unzipped and vaulted successfully!`
+        : `ℹ️ **Archive Checked:** \`${fileName}\`\n🎵 **Status:** All tracks already exist in vault. No duplicates uploaded.`;
+
+      // 1. Post to Target Channel (Guaranteed write permissions)
       try {
-        const logText = uploadedTracks > 0
-          ? `✅ **Archive Processed:** \`${fileName}\`\n🎵 **Tracks Uploaded:** ${uploadedTracks} file(s)\n📦 **Status:** Unzipped and vaulted successfully!`
-          : `ℹ️ **Archive Checked:** \`${fileName}\`\n🎵 **Status:** All tracks already exist in vault. No duplicates uploaded.`;
+        await client.sendMessage(targetEntity, { message: logText });
+        console.log(`Sent confirmation log to vault channel.`);
+      } catch (tErr) {
+        console.warn(`Could not send log to vault channel: ${tErr.message}`);
+      }
+
+      // 2. Try to post in Source Channel (if permissions allow)
+      try {
         try {
           await client.sendMessage(sourceEntity, {
             message: logText,
@@ -221,9 +231,17 @@ function findAudioFiles(dir, fileList = []) {
           });
         }
         console.log(`Sent confirmation log to source channel.`);
-      } catch (logErr) {
-        console.warn(`Could not send log to source channel: ${logErr.message}`);
+      } catch (sErr) {
+        console.log(`Source channel does not allow sending text messages (ChatWriteForbidden): skipping source log.`);
       }
+
+      // 3. Send direct notification to your Telegram "Saved Messages"
+      try {
+        await client.sendMessage('me', {
+          message: `🔔 **Telegram Music Addon Alert**\n${logText}`
+        });
+        console.log(`Sent alert to Saved Messages.`);
+      } catch (_) {}
 
     } catch (err) {
       console.error(`Error processing message ${msg.id}:`, err.message);
