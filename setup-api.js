@@ -204,6 +204,22 @@ router.get('/status', (req, res) => {
   });
 });
 
+router.get('/session', (req, res) => {
+  const env = readEnvMap();
+  const session = env.TELEGRAM_SESSION_STRING || process.env.TELEGRAM_SESSION_STRING || (activeSetup && activeSetup.sessionString) || null;
+  if (!session) {
+    return res.status(404).json({
+      ok: false,
+      error: 'No Telegram session found yet. Complete the /setup wizard first.'
+    });
+  }
+  res.json({
+    ok: true,
+    sessionString: session,
+    instructions: 'Copy this string and add it to Render Dashboard -> Environment -> TELEGRAM_SESSION_STRING'
+  });
+});
+
 router.get('/tunnel', (req, res) => {
   res.json({
     active: Boolean(tunnel.getTunnelUrl()),
@@ -299,6 +315,11 @@ router.post('/verify-code', async (req, res) => {
     activeSetup.sessionString = activeSetup.client.session.save();
     activeSetup.isAuthorized = true;
 
+    console.log('\n======================================================');
+    console.log('  [TELEGRAM SESSION GENERATED]');
+    console.log(`  TELEGRAM_SESSION_STRING=${activeSetup.sessionString}`);
+    console.log('======================================================\n');
+
     return res.json({
       ok: true,
       user: {
@@ -343,6 +364,11 @@ router.post('/verify-2fa', async (req, res) => {
 
     activeSetup.sessionString = activeSetup.client.session.save();
     activeSetup.isAuthorized = true;
+
+    console.log('\n======================================================');
+    console.log('  [TELEGRAM SESSION GENERATED]');
+    console.log(`  TELEGRAM_SESSION_STRING=${activeSetup.sessionString}`);
+    console.log('======================================================\n');
 
     return res.json({
       ok: true,
@@ -661,16 +687,23 @@ router.post('/save', async (req, res) => {
       }, 500);
     }
 
+    console.log('\n======================================================');
+    console.log('  [RENDER DASHBOARD CONFIG]');
+    console.log(`  TELEGRAM_SESSION_STRING=${updates.TELEGRAM_SESSION_STRING}`);
+    console.log('======================================================\n');
+
     return res.json({
       ok: true,
       manifestUrl,
       tracksCount: getLibraryTracksCount(),
+      sessionString: updates.TELEGRAM_SESSION_STRING,
       config: {
         channel: updates.TELEGRAM_CHANNEL,
         hasSecret: Boolean(updates.URL_SECRET),
         port: updates.PORT || '3000',
         hasTunnel: Boolean(enableTunnel),
         urlSecret: updates.URL_SECRET || null,
+        sessionString: updates.TELEGRAM_SESSION_STRING,
       },
     });
   } catch (err) {
