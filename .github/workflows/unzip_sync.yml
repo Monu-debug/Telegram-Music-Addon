@@ -1,0 +1,48 @@
+name: Auto Unzip Music Sync
+
+on:
+  schedule:
+    # Runs automatically every 2 hours
+    - cron: '0 */2 * * *'
+  # Allows you to click "Run workflow" manually from GitHub anytime
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  unzip-and-sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm install --omit=dev
+
+      - name: Run Unzip & Forward Worker
+        env:
+          TELEGRAM_API_ID: ${{ secrets.TELEGRAM_API_ID || '20861184' }}
+          TELEGRAM_API_HASH: ${{ secrets.TELEGRAM_API_HASH || '90455d0cdedfe6bb16bd716e2438703b' }}
+          TELEGRAM_SESSION_STRING: ${{ secrets.TELEGRAM_SESSION_STRING }}
+          SOURCE_CHANNEL: ${{ secrets.SOURCE_CHANNEL || '-1002806828665' }}
+          TARGET_CHANNEL: ${{ secrets.TARGET_CHANNEL || '-1004316463213' }}
+        run: node scripts/unzip_sync.js
+
+      - name: Save processed files record
+        run: |
+          git config --global user.name 'github-actions[bot]'
+          git config --global user.email 'github-actions[bot]@users.noreply.github.com'
+          if [ -f scripts/processed_zips.json ]; then
+            git add scripts/processed_zips.json
+            git diff-index --quiet HEAD || git commit -m "Update processed zips record [skip ci]"
+            git push || true
+          fi
