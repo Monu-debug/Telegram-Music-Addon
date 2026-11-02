@@ -2,8 +2,8 @@ name: Auto Unzip Music Sync
 
 on:
   schedule:
-    # Runs automatically every 2 hours
-    - cron: '0 */2 * * *'
+    # Runs automatically every 15 minutes
+    - cron: '*/15 * * * *'
   # Allows you to click "Run workflow" manually from GitHub anytime
   workflow_dispatch:
 
