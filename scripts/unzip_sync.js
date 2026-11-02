@@ -10,11 +10,11 @@ const API_HASH = process.env.TELEGRAM_API_HASH || '90455d0cdedfe6bb16bd716e24387
 const SESSION_STRING = process.env.TELEGRAM_SESSION_STRING || '';
 const SOURCE_CHANNEL = process.env.SOURCE_CHANNEL || '-1002806828665';
 const TARGET_CHANNEL = process.env.TARGET_CHANNEL || '-1004316463213';
-const SCAN_LIMIT = parseInt(process.env.SCAN_LIMIT || '20', 10);
+const SCAN_LIMIT = parseInt(process.env.SCAN_LIMIT || '30', 10);
 
 const AUDIO_EXTS = ['.flac', '.m4a', '.mp3', '.wav', '.opus', '.alac', '.ec3'];
 
-// Track already processed messages & files using a file log
+// Local file log
 const PROCESSED_LOG = path.join(__dirname, 'processed_zips.json');
 function loadProcessed() {
   if (fs.existsSync(PROCESSED_LOG)) {
@@ -88,26 +88,43 @@ function findAudioFiles(dir, fileList = []) {
     process.exit(1);
   }
 
-  // Double Protection: Check what audio titles already exist in target channel
-  console.log(`Scanning existing audio in vault channel (${TARGET_CHANNEL})...`);
-  const existingTracks = new Set();
+  // =========================================================================
+  // TELEGRAM-NATIVE DEDUPLICATION: Read history directly from vault channel
+  // Even if Git history is wiped or fresh runner starts, Telegram knows what's there!
+  // =========================================================================
+  console.log(`Checking vault channel (${TARGET_CHANNEL}) for existing archives & tracks...`);
+  const alreadyVaultedArchives = new Set();
+  const alreadyVaultedTracks = new Set();
+
   try {
-    for await (const tm of client.iterMessages(targetEntity, { limit: 500 })) {
-      if (tm.media && tm.media.document) {
-        const audioAttr = tm.media.document.attributes?.find(a => a.className === 'DocumentAttributeAudio');
-        if (audioAttr && audioAttr.title) {
-          existingTracks.add(audioAttr.title.trim().toLowerCase());
+    const vaultMessages = await client.getMessages(targetEntity, { limit: 500 });
+    for (const vm of vaultMessages) {
+      // 1. Check for archive log messages (e.g. "Archive Processed: filename.zip")
+      if (vm.message) {
+        const match = vm.message.match(/Archive Processed:\s*`([^`]+)`/i) || vm.message.match(/Archive Checked:\s*`([^`]+)`/i);
+        if (match) {
+          alreadyVaultedArchives.add(match[1].trim().toLowerCase());
         }
-        const fnAttr = tm.media.document.attributes?.find(a => a.className === 'DocumentAttributeFilename');
+      }
+
+      // 2. Check for individual audio documents
+      if (vm.media && vm.media.document) {
+        const audioAttr = vm.media.document.attributes?.find(a => a.className === 'DocumentAttributeAudio');
+        if (audioAttr && audioAttr.title) {
+          alreadyVaultedTracks.add(audioAttr.title.trim().toLowerCase());
+        }
+        const fnAttr = vm.media.document.attributes?.find(a => a.className === 'DocumentAttributeFilename');
         if (fnAttr && fnAttr.fileName) {
-          existingTracks.add(path.parse(fnAttr.fileName).name.trim().toLowerCase());
+          alreadyVaultedTracks.add(path.parse(fnAttr.fileName).name.trim().toLowerCase());
+          alreadyVaultedTracks.add(fnAttr.fileName.trim().toLowerCase());
         }
       }
     }
-  } catch (err) {
-    console.warn(`Could not read existing tracks from vault: ${err.message}`);
+  } catch (vErr) {
+    console.warn(`Could not read vault history: ${vErr.message}`);
   }
-  console.log(`Found ${existingTracks.size} existing track(s) in vault.`);
+
+  console.log(`Vault Status: Found ${alreadyVaultedArchives.size} recorded archive(s) and ${alreadyVaultedTracks.size} track(s) already in vault.`);
 
   console.log(`Scanning last ${SCAN_LIMIT} messages from source channel (${SOURCE_CHANNEL})...`);
   const messages = await client.getMessages(sourceEntity, { limit: SCAN_LIMIT });
@@ -125,13 +142,20 @@ function findAudioFiles(dir, fileList = []) {
     const strMsgId = String(msg.id).toLowerCase();
     const strDocId = doc.id ? doc.id.toString().toLowerCase() : '';
 
-    if (processed.has(strMsgId) || (strDocId && processed.has(strDocId)) || processed.has(lowerFileName)) {
-      console.log(`Skipping already processed ZIP [ID: ${msg.id}]: ${fileName}`);
+    // Check if archive was ALREADY processed either in local log OR in Telegram target channel
+    const isAlreadyProcessed =
+      alreadyVaultedArchives.has(lowerFileName) ||
+      processed.has(strMsgId) ||
+      (strDocId && processed.has(strDocId)) ||
+      processed.has(lowerFileName);
+
+    if (isAlreadyProcessed) {
+      console.log(`[SKIP] Archive "${fileName}" is already in your vault channel. Skipping!`);
       continue;
     }
 
     console.log(`\n======================================================`);
-    console.log(`[ZIP FOUND] ID: ${msg.id} | ${fileName} (${(Number(doc.size) / (1024*1024)).toFixed(1)} MB)`);
+    console.log(`[NEW ZIP FOUND] ID: ${msg.id} | ${fileName} (${(Number(doc.size) / (1024*1024)).toFixed(1)} MB)`);
     console.log(`Downloading archive...`);
 
     const zipFilePath = path.join(tmpDir, `zip_${msg.id}.zip`);
@@ -150,7 +174,6 @@ function findAudioFiles(dir, fileList = []) {
       console.log(`\nExtracting archive...`);
       fs.mkdirSync(extractDir, { recursive: true });
 
-      // Unzip using system unzip (standard on Linux/macOS)
       try {
         execSync(`unzip -o -q "${zipFilePath}" -d "${extractDir}"`);
       } catch (unzipErr) {
@@ -168,9 +191,9 @@ function findAudioFiles(dir, fileList = []) {
         const title = path.parse(baseName).name;
         const cleanTitle = title.trim().toLowerCase();
 
-        // Skip track if already sitting in target channel
-        if (existingTracks.has(cleanTitle)) {
-          console.log(`  [SKIP] "${baseName}" is already in your vault channel.`);
+        // Secondary Track-Level Check: If song is already in vault, skip it!
+        if (alreadyVaultedTracks.has(cleanTitle) || alreadyVaultedTracks.has(baseName.toLowerCase())) {
+          console.log(`  [SKIP] Track "${baseName}" is already in your vault channel.`);
           continue;
         }
 
@@ -193,24 +216,26 @@ function findAudioFiles(dir, fileList = []) {
             }
           }
         });
-        existingTracks.add(cleanTitle);
+        alreadyVaultedTracks.add(cleanTitle);
+        alreadyVaultedTracks.add(baseName.toLowerCase());
         uploadedTracks++;
         console.log('');
       }
 
+      // Record in local cache
       processed.add(strMsgId);
       if (strDocId) processed.add(strDocId);
       processed.add(lowerFileName);
+      alreadyVaultedArchives.add(lowerFileName);
       saveProcessed(processed);
       processedCount++;
       console.log(`Completed processing: ${fileName}`);
 
-      // Send log notification (Source Channel + Target Vault Channel)
+      // Send log notification to Target Vault Channel (Permanent proof of upload)
       const logText = uploadedTracks > 0
         ? `✅ **Archive Processed:** \`${fileName}\`\n🎵 **Tracks Uploaded:** ${uploadedTracks} file(s)\n📦 **Status:** Unzipped and vaulted successfully!`
         : `ℹ️ **Archive Checked:** \`${fileName}\`\n🎵 **Status:** All tracks already exist in vault. No duplicates uploaded.`;
 
-      // 1. Post to Target Channel (Guaranteed write permissions)
       try {
         await client.sendMessage(targetEntity, { message: logText });
         console.log(`Sent confirmation log to vault channel.`);
@@ -218,29 +243,19 @@ function findAudioFiles(dir, fileList = []) {
         console.warn(`Could not send log to vault channel: ${tErr.message}`);
       }
 
-      // 2. Try to post in Source Channel (if permissions allow)
+      // Try sending to source channel if write permissions allow
       try {
-        try {
-          await client.sendMessage(sourceEntity, {
-            message: logText,
-            replyTo: msg.id
-          });
-        } catch (_) {
-          await client.sendMessage(sourceEntity, {
-            message: logText
-          });
-        }
-        console.log(`Sent confirmation log to source channel.`);
-      } catch (sErr) {
-        console.log(`Source channel does not allow sending text messages (ChatWriteForbidden): skipping source log.`);
-      }
+        await client.sendMessage(sourceEntity, {
+          message: logText,
+          replyTo: msg.id
+        });
+      } catch (_) {}
 
-      // 3. Send direct notification to your Telegram "Saved Messages"
+      // Send alert to personal Saved Messages
       try {
         await client.sendMessage('me', {
           message: `🔔 **Telegram Music Addon Alert**\n${logText}`
         });
-        console.log(`Sent alert to Saved Messages.`);
       } catch (_) {}
 
     } catch (err) {
