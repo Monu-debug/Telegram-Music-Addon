@@ -166,6 +166,26 @@ function findAudioFiles(dir, fileList = []) {
       processedCount++;
       console.log(`Completed processing: ${fileName}`);
 
+      // Send log notification to source channel
+      try {
+        const logText = `✅ **Archive Processed:** \`${fileName}\`\n🎵 **Tracks Uploaded:** ${audioFiles.length} file(s)\n📦 **Status:** Unzipped and vaulted successfully!`;
+        try {
+          // Reply directly to the ZIP file message
+          await client.sendMessage(sourceEntity, {
+            message: logText,
+            replyTo: msg.id
+          });
+        } catch (_) {
+          // Fallback if replies/comments are disabled
+          await client.sendMessage(sourceEntity, {
+            message: logText
+          });
+        }
+        console.log(`Sent confirmation log to source channel.`);
+      } catch (logErr) {
+        console.warn(`Could not send log to source channel: ${logErr.message}`);
+      }
+
     } catch (err) {
       console.error(`Error processing message ${msg.id}:`, err.message);
     } finally {
