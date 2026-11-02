@@ -14,12 +14,15 @@ const SCAN_LIMIT = parseInt(process.env.SCAN_LIMIT || '20', 10);
 
 const AUDIO_EXTS = ['.flac', '.m4a', '.mp3', '.wav', '.opus', '.alac', '.ec3'];
 
-// Track already processed messages using a simple file log
+// Track already processed messages & files using a file log
 const PROCESSED_LOG = path.join(__dirname, 'processed_zips.json');
 function loadProcessed() {
   if (fs.existsSync(PROCESSED_LOG)) {
     try {
-      return new Set(JSON.parse(fs.readFileSync(PROCESSED_LOG, 'utf8')));
+      const raw = JSON.parse(fs.readFileSync(PROCESSED_LOG, 'utf8'));
+      if (Array.isArray(raw)) {
+        return new Set(raw.map(item => String(item).toLowerCase()));
+      }
     } catch (_) {}
   }
   return new Set();
@@ -69,8 +72,6 @@ function findAudioFiles(dir, fileList = []) {
   const tmpDir = path.join(__dirname, 'tmp');
   if (!fs.existsSync(tmpDir)) fs.mkdirSync(tmpDir, { recursive: true });
 
-  console.log(`Scanning last ${SCAN_LIMIT} messages from source channel (${SOURCE_CHANNEL})...`);
-  
   let sourceEntity;
   try {
     sourceEntity = await client.getEntity(SOURCE_CHANNEL);
@@ -87,6 +88,28 @@ function findAudioFiles(dir, fileList = []) {
     process.exit(1);
   }
 
+  // Double Protection: Check what audio titles already exist in target channel
+  console.log(`Scanning existing audio in vault channel (${TARGET_CHANNEL})...`);
+  const existingTracks = new Set();
+  try {
+    for await (const tm of client.iterMessages(targetEntity, { limit: 500 })) {
+      if (tm.media && tm.media.document) {
+        const audioAttr = tm.media.document.attributes?.find(a => a.className === 'DocumentAttributeAudio');
+        if (audioAttr && audioAttr.title) {
+          existingTracks.add(audioAttr.title.trim().toLowerCase());
+        }
+        const fnAttr = tm.media.document.attributes?.find(a => a.className === 'DocumentAttributeFilename');
+        if (fnAttr && fnAttr.fileName) {
+          existingTracks.add(path.parse(fnAttr.fileName).name.trim().toLowerCase());
+        }
+      }
+    }
+  } catch (err) {
+    console.warn(`Could not read existing tracks from vault: ${err.message}`);
+  }
+  console.log(`Found ${existingTracks.size} existing track(s) in vault.`);
+
+  console.log(`Scanning last ${SCAN_LIMIT} messages from source channel (${SOURCE_CHANNEL})...`);
   const messages = await client.getMessages(sourceEntity, { limit: SCAN_LIMIT });
   let processedCount = 0;
 
@@ -98,7 +121,11 @@ function findAudioFiles(dir, fileList = []) {
 
     if (!fileName || !fileName.toLowerCase().endsWith('.zip')) continue;
 
-    if (processed.has(msg.id)) {
+    const lowerFileName = fileName.toLowerCase();
+    const strMsgId = String(msg.id).toLowerCase();
+    const strDocId = doc.id ? doc.id.toString().toLowerCase() : '';
+
+    if (processed.has(strMsgId) || (strDocId && processed.has(strDocId)) || processed.has(lowerFileName)) {
       console.log(`Skipping already processed ZIP [ID: ${msg.id}]: ${fileName}`);
       continue;
     }
@@ -134,10 +161,18 @@ function findAudioFiles(dir, fileList = []) {
       const audioFiles = findAudioFiles(extractDir);
       console.log(`Found ${audioFiles.length} audio track(s) inside archive.`);
 
+      let uploadedTracks = 0;
       for (let i = 0; i < audioFiles.length; i++) {
         const audioFile = audioFiles[i];
         const baseName = path.basename(audioFile);
         const title = path.parse(baseName).name;
+        const cleanTitle = title.trim().toLowerCase();
+
+        // Skip track if already sitting in target channel
+        if (existingTracks.has(cleanTitle)) {
+          console.log(`  [SKIP] "${baseName}" is already in your vault channel.`);
+          continue;
+        }
 
         console.log(`  [${i + 1}/${audioFiles.length}] Uploading: ${baseName}`);
 
@@ -158,25 +193,29 @@ function findAudioFiles(dir, fileList = []) {
             }
           }
         });
+        existingTracks.add(cleanTitle);
+        uploadedTracks++;
         console.log('');
       }
 
-      processed.add(msg.id);
+      processed.add(strMsgId);
+      if (strDocId) processed.add(strDocId);
+      processed.add(lowerFileName);
       saveProcessed(processed);
       processedCount++;
       console.log(`Completed processing: ${fileName}`);
 
       // Send log notification to source channel
       try {
-        const logText = `✅ **Archive Processed:** \`${fileName}\`\n🎵 **Tracks Uploaded:** ${audioFiles.length} file(s)\n📦 **Status:** Unzipped and vaulted successfully!`;
+        const logText = uploadedTracks > 0
+          ? `✅ **Archive Processed:** \`${fileName}\`\n🎵 **Tracks Uploaded:** ${uploadedTracks} file(s)\n📦 **Status:** Unzipped and vaulted successfully!`
+          : `ℹ️ **Archive Checked:** \`${fileName}\`\n🎵 **Status:** All tracks already exist in vault. No duplicates uploaded.`;
         try {
-          // Reply directly to the ZIP file message
           await client.sendMessage(sourceEntity, {
             message: logText,
             replyTo: msg.id
           });
         } catch (_) {
-          // Fallback if replies/comments are disabled
           await client.sendMessage(sourceEntity, {
             message: logText
           });

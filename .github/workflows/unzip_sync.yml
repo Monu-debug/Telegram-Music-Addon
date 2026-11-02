@@ -41,8 +41,9 @@ jobs:
         run: |
           git config --global user.name 'github-actions[bot]'
           git config --global user.email 'github-actions[bot]@users.noreply.github.com'
+          git pull --rebase origin main || true
           if [ -f scripts/processed_zips.json ]; then
             git add scripts/processed_zips.json
             git diff-index --quiet HEAD || git commit -m "Update processed zips record [skip ci]"
-            git push || true
+            git push origin main || true
           fi
