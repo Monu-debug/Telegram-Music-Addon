@@ -24,6 +24,7 @@ app.set('trust proxy', true);
 app.use(express.json());
 app.use('/public', express.static(path.join(__dirname, 'public'), { etag: false, maxAge: 0 }));
 app.use('/api/setup', setupApi.router);
+app.get('/setup/session', (req, res) => setupApi.router.handle(req, res));
 app.get('/setup', (req, res) => res.sendFile(path.join(__dirname, 'public', 'setup.html')));
 
 // WebDAV protocol discovery: intercept OPTIONS /dav before CORS ends with 204
